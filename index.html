@@ -24,9 +24,9 @@
     window.onload = updateTime;   // Initialize on load
   </script>
 </head>
-<body class="bg-gray-900 text-gray-100 font-mono bg-[url('./background.jpg')] bg-cover bg-top overflow-x-hidden">
+<body class="bg-black text-gray-100 font-mono bg-fixed bg-cover bg-center bg-no-repeat min-h-screen overflow-x-hidden", style="background-image: url(./background.jpg);">
   <!-- Navigation Bar -->
-  <div class="bg-black text-gray-100 shadow-md fixed w-full">
+  <div class="bg-black text-gray-100 shadow-md fixed w-full z-50 h-8">
     <div class="mx-auto flex justify-between items-center">
       <!-- Hamburger Button (Visible on Small Screens) -->
       <button class="block md:hidden text-gray-100 hover:text-green-400 focus:outline-none" onclick="toggleMenu()">
@@ -57,12 +57,12 @@
   </div>
 
   <!-- Mobile Menu (Initially Hidden) -->
-  <div id="mobile-menu" class="hidden md:hidden bg-black  absolute top-16 w-full z-20">
+  <div id="mobile-menu" class="hidden md:hidden bg-black fixed top-8 w-full z-20">
     <a href="index.html" class="block px-4 py-2 text-gray-400 hover:text-white">1: Home</a>
   </div>
 
   <!-- Main Content -->
-  <div class="flex items-center justify-center min-h-screen pt-16 pb-16">
+  <div class="flex items-center justify-center min-h-screen pt-16 pb-16 pl-8 pr-8">
     <div class="w-full max-w-3xl">
       
       <!-- Terminal Header -->

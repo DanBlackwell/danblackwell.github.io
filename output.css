@@ -574,8 +574,16 @@ video {
   top: 4rem;
 }
 
+.top-8 {
+  top: 2rem;
+}
+
 .z-20 {
   z-index: 20;
+}
+
+.z-50 {
+  z-index: 50;
 }
 
 .mx-auto {
@@ -585,6 +593,10 @@ video {
 
 .ml-0 {
   margin-left: 0px;
+}
+
+.mt-5 {
+  margin-top: 1.25rem;
 }
 
 .block {
@@ -611,8 +623,20 @@ video {
   height: 1.5rem;
 }
 
+.h-\[2000px\] {
+  height: 2000px;
+}
+
 .h-full {
   height: 100%;
+}
+
+.h-16 {
+  height: 4rem;
+}
+
+.h-8 {
+  height: 2rem;
 }
 
 .min-h-screen {
@@ -723,16 +747,20 @@ video {
   --tw-bg-opacity: 0.75;
 }
 
-.bg-\[url\(\'\.\/background\.jpg\'\)\] {
-  background-image: url('./background.jpg');
-}
-
 .bg-cover {
   background-size: cover;
 }
 
-.bg-top {
-  background-position: top;
+.bg-fixed {
+  background-attachment: fixed;
+}
+
+.bg-center {
+  background-position: center;
+}
+
+.bg-no-repeat {
+  background-repeat: no-repeat;
 }
 
 .p-2 {
@@ -767,12 +795,29 @@ video {
   padding-right: 2rem;
 }
 
+.pt-10 {
+  padding-top: 2.5rem;
+}
+
 .pt-16 {
   padding-top: 4rem;
 }
 
+.pl-8 {
+  padding-left: 2rem;
+}
+
+.text-center {
+  text-align: center;
+}
+
 .font-mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.text-4xl {
+  font-size: 2.25rem;
+  line-height: 2.5rem;
 }
 
 .text-lg {
@@ -848,11 +893,6 @@ video {
   50% {
     opacity: 0;
   }
-}
-
-.hover\:bg-gray-700:hover {
-  --tw-bg-opacity: 1;
-  background-color: rgb(55 65 81 / var(--tw-bg-opacity, 1));
 }
 
 .hover\:text-green-400:hover {
