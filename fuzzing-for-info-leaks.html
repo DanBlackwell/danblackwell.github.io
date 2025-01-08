@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/png" href="/my-favicon/favicon-96x96.png" sizes="96x96" />
+  <link rel="icon" type="image/svg+xml" href="/my-favicon/favicon.svg" />
+  <link rel="shortcut icon" href="/my-favicon/favicon.ico" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/my-favicon/apple-touch-icon.png" />
+  <link rel="manifest" href="/my-favicon/site.webmanifest" />
+  <link href="./output.css" rel="stylesheet">
+  <link href="./glass.css" rel="stylesheet">
+  <title>Fuzzing for Info Leaks</title>
+  <script>
+    // JavaScript to update time dynamically
+    function updateTime() {
+      const now = new Date();
+      const time = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const date = now.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+      document.getElementById('time').innerText = `${time}`;
+      document.getElementById('date').innerText = `${date}`;
+    }
+    setInterval(updateTime, 1000); // Update every second
+    window.onload = updateTime;   // Initialize on load
+  </script>
+  <style>
+    pre {
+        background-color: #282c34;  /* Dark background */
+        padding: 0px;               /* Reduced padding inside the code block */
+        border-radius: 4px;         /* Optional: rounded corners */
+        overflow-x: auto;           /* Ensure horizontal scrolling */
+        margin: 0;                  /* Remove margin around the <pre> block */
+    }
+    code {
+        padding: 0;                 /* Remove padding inside <code> */
+    }
+  </style>
+</head>
+<body class="bg-black text-gray-100 font-mono bg-fixed bg-cover bg-center bg-no-repeat min-h-screen overflow-x-hidden", style="background-image: url(./background.jpg);">
+  <!-- Navigation Bar -->
+  <div class="bg-black text-gray-100 shadow-md fixed top-0 w-full z-50">
+    <div class="mx-auto flex justify-between items-center">
+      <!-- Hamburger Button (Visible on Small Screens) -->
+      <button class="block md:hidden text-gray-100 hover:text-green-400 focus:outline-none" onclick="toggleMenu()">
+      <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path>
+      </svg>
+      </button>
+
+      <!-- Left Section: Name -->
+      <div class="px-4 pr-8 text-green-400 font-mono text-lg ml-0">
+        Dan Blackwell
+      </div>
+
+      <!-- Tab Menu (Hidden on Small Screens) -->
+      <div class="hidden md:flex">
+        <a href="index.html" class="px-6 py-1 bg-black text-white border-b border-x border-gray-700">1: Home</a>
+        <a href="blog.html" class="px-6 py-1 bg-gray-800 text-white border-b border-x border-gray-700">2: Blog</a>
+      </div>
+  
+      <!-- Filler Space to Extend Black Background -->
+      <div class="flex-grow bg-black h-full"></div>
+
+      <!-- Stats Section -->
+      <div class="flex items-center space-x-4 px-4 bg-black">
+        <div id="date" class="text-gray-400"></div>
+        <div id="time" class="text-gray-400"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mobile Menu (Initially Hidden) -->
+  <div id="mobile-menu" class="hidden md:hidden bg-black fixed top-8 w-full z-20">
+    <a href="index.html" class="block px-4 py-2 text-gray-400 hover:text-white">1: Home</a>
+    <a href="blog.html" class="block px-4 py-2 text-gray-100 hover:text-white">2: Blog</a>
+  </div>
+
+  <!-- Main Content -->
+  <div class="max-w-4xl mx-auto pt-24 pb-16">
+    <div class="px-8 py-8 bg-gray-900 bg-opacity-95 rounded-lg shadow-lg">
+      <h1 class="text-4xl font-bold mb-4">Detecting Information Leaks with a Fuzzer</h1>
+      <p class="text-gray-300 text-sm mb-4 text-gray-400">
+        NOTE: This essay explains many of the basic concepts underpinning LeakFuzzer (<a href="https://github.com/DanBlackwell/LeakFuzzer" class="text-blue-400 hover:underline">[source here]</a> <a href="https://link.springer.com/content/pdf/10.1007/s10664-024-10556-3.pdf" class="text-blue-400 hover:underline">[paper here]</a>). And to a lesser extent, the underpinnings of NIFuzz (<a href="https://github.com/DanBlackwell/NIFuzz" class="text-blue-400 hover:underline">[source here]</a>).
+      </p>
+
+      <p class="text-gray-300 mb-4">
+        Fuzzers can find a lot of bugs - but on their own they are pretty dumb. 
+        Generally they can only tell whether the program executed successfully, crashed or exceeded a specified runtime limit (which we could call a ‘hang’ or ‘timeout’<sup class="footnote"><a href="#footnote1" id="ref1" class="text-blue-400 hover:underline">1</a><span class="tooltip">which could potentially be used in a denial-of-service attack</span></sup>). 
+        The brilliant set of sanitizers make it possible for a fuzzer to detect issues such as <a href="https://clang.llvm.org/docs/AddressSanitizer.html" class="text-blue-400 hover:underline">out-of-bounds memory accesses</a>, <a href="https://clang.llvm.org/docs/LeakSanitizer.html" class="text-blue-400 hover:underline">memory leaks</a>, <a href="https://clang.llvm.org/docs/MemorySanitizer.html" class="text-blue-400 hover:underline">some uninitialised memory uses</a> and <a href="https://clang.llvm.org/docs/UndefinedBehaviorSanitizer.html" class="text-blue-400 hover:underline">integer and floating point overflows</a>.
+        Behind the scenes, these sanitizers are inserting additional checks into the program which cause it to crash if any of the issues are detected - though the implementations themselves can be quite complex.
+      </p>
+      <p class="text-gray-300 mb-4">
+        All of the above sanitizers are capable of detecting bugs that can be demonstrated with a single program execution.
+        That's reasonable, but how could we detect bugs that require multiple program executions in order to be demonstrated?
+        Do such bugs even exist?
+      </p>
+      <p class="text-gray-300 mb-4">
+        As it turns out, there are classes of bug that require multiple program executions to confirm their existence.
+        The presence of a null pointer dereference is a <em>property</em> of a single program execution (either it dereferences a null pointer or it doesn't - and you'll certainly know if it does); properties that can only be expressed in sets of executions are known as <a href="https://en.wikipedia.org/wiki/Hyperproperty" class="text-blue-400 hover:underline">hyperproperties</a>.
+      </p>
+
+      <h2 class="text-2xl font-bold mb-4">Information Leaks</h2>
+      <p class="text-gray-300 mb-4">
+        Much of my PhD work was on using fuzzers to detect <em>information leaks</em>, which are a form of error that requires multiple program executions to confirm; and these are the topic of this essay.
+      </p>
+      <p class="text-gray-300 mb-4">
+        Firstly, let's define what we mean by an <em>information leak</em>; then let's look at a couple of examples.
+        To quote the <a href="https://cwe.mitre.org/data/definitions/200.html" class="text-blue-400 hover:underline">CWE-200 definition</a>: <em>The product exposes sensitive information to an actor that is not explicitly authorized to have access to that information</em>.
+        Now, there are a number of ways that this can happen, but my work was concerned with detecting programming errors within software that result in different outputs from the program, depending on the confidential inputs.
+      </p>
+      <p class="text-gray-300 mb-4">
+        Let's look at a very simple example to start with; we'll look at a single function that takes a secret (confidential) input and returns a public (non-confidential) output. Throughout these examples we will treat the return value as the 'program' output - in practice this is really things like stdout, outgoing network requests, and log files.
+      </p>
+
+      <div class="px-16 pb-4">
+        <pre><code class="language-c">int my_leaky_func(int secret_input) {
+  if (secret_input > 0) {
+    return 1;
+  } else {
+    return 0;
+  }
+}</code></pre>
+      </div>
+      
+      <p class="text-gray-300 mb-4">
+        Here we can see that a return value of 1 indicates that the value of <em>secret_input</em> was &gt; 0, and a return value of 0 indicates that the value of <em>secret_input</em> was &lt;= 0.
+        As a user of the system without confidential access, we can still see the return value of the function - as we stated that it is a public (non-confidential) output.
+        The problem here is that we can learn some information about the value of the <em>secret_input</em>; and we should not be able to.
+      </p>
+
+      <h2 class="text-2xl font-bold mb-4">Hypertesting</h2>
+      
+      <p class="text-gray-300 mb-4">
+        Ok, so we know that information is being leaked about the value of <em>secret_input</em>, but how can we demonstrate it?
+        The answer is relatively simple: we need to find two different inputs that result in different outputs (from our point of view as a non-confidential level user).
+        For this we can choose the inputs {"secret_input": 0} and {"secret_input": 1} - which produce outputs 0 and 1 respectively.
+      </p>
+      <p class="text-gray-300 mb-4">
+        As we require two different inputs to demonstrate the issue, the property must be a hyperproperty.
+        In fact, the property we are looking for is the <a href="https://en.wikipedia.org/wiki/Non-interference_(security)" class="text-blue-400 hover:underline">non-interference property</a>.
+        Translated to this context, the property is that the secret (confidential) input to the function does not interfere with the public (non-confidential) output.
+        The pair of tests we found above demonstrate a <em>violation</em> of this property.
+      </p>
+      <p class="text-gray-300 mb-4">
+        This <em>pair</em> of tests is called a <em>hypertest</em>.
+      </p>
+
+      <h2 class="text-2xl font-bold mb-4">Security Policies</h2>
+
+      <p class="text-gray-300 mb-4">
+        You might notice that we seemed to conjure this <em>security policy</em> - that <em>secret_input</em> is confidential, and the function return value is non-confidential - out of thin air.
+        And you'd be right, there is nothing in the code that tells us this.
+        It's not that people haven't tried building these rules into the type system of programming languages [<a href="https://calhoun.nps.edu/server/api/core/bitstreams/2d77e3a9-a70c-41f9-8b84-6996a0256bb8/content" class="text-blue-400 hover:underline">1</a>,<a href="https://www.cs.cornell.edu/jif/doc/jif-2.0.0/jif_programming.html" class="text-blue-400 hover:underline">2</a>,<a href="https://hackage.haskell.org/package/seclib" class="text-blue-400 hover:underline">3</a>]; it's just that the developer overhead is just not worth it in most cases.
+      </p>
+      <p class="text-gray-300 mb-4">
+        You'll have probably come across security policies organically in computer file systems when attempting to open a file only to receive a warning that "<em>you do not have permission to access this file</em>".
+        Another place where these are obvious is social media platforms, where users can restrict the visibility of profile information and posts (see <a href="https://engineering.fb.com/2024/08/27/security/privacy-aware-infrastructure-purpose-limitation-meta/" class="text-blue-400 hover:underline">here</a>).
+      </p>
+
+      <h2 class="text-2xl font-bold mb-4">Automatically Detecting Information Leaks</h2>
+
+      <p class="text-gray-300 mb-4">
+        So, basically every useful program ever written does not have information flow security built into its source code; and most do not have a security policy written down anywhere.
+        Still, it would be nice to be able to check whether programs conform to some security policy (ideally the one written down somewhere, but more likely existing in the developer's mind).
+      </p>
+      <p class="text-gray-300 mb-4">
+        People have come up with a number of ways to do this automatically:
+      </p>
+      <ul class="list-disc list-inside text-gray-300 mb-4">
+        <li>
+          Use taint analysis, which tracks the flow of data through a program (or system). 
+          <a href="https://blogs.uni-paderborn.de/sse/tools/flowdroid/" class="text-blue-400 hover:underline">FlowDroid</a> does so for Android apps.
+          In particular FlowDroid is tracking the flow of user information from <em>sources</em> such as contacts, location and calendar information; to <em>sinks</em> such as web requests, email or SMS<sup><a href="#footnote2" id="ref2" class="text-blue-400 hover:underline">2</a></sup>.
+          For context, a common pattern of Android malware is to harvest user data and offload it to the attackers.
+        </li>
+        <br>
+        <li>
+          <a href="https://dl.acm.org/doi/pdf/10.1145/335169.335201" class="text-blue-400 hover:underline">Compile in runtime assertions</a> that enforce security policies; the linked work defines these in terms of finite state machines.
+        </li>
+        <br>
+        <li>
+          <a href="https://www.eecs.qmul.ac.uk/~pm/Papers/acsac5.pdf" class="text-blue-400 hover:underline">Use a model checker</a> to verify whether there exist any hypertests that demonstrate a violation of the non-interference property.
+        </li>
+        <br>
+        <li>
+          Adapt an existing automated test generation tool to generate hypertests, and use assertions to fail any tests that demonstrate a violation of the non-interference property.
+        </li>
+      </ul>
+
+      <p class="text-gray-300 mb-4">
+      It is this last approach that I took in my work.
+      I chose fuzzers as they work at a system level, but alternatively you could use a tool like <a href="https://en.wikipedia.org/wiki/EvoSuite" class="text-blue-400 hover:underline">EvoSuite</a> which generates unit tests.
+      </p>
+
+      <h2 class="text-2xl font-bold mb-4">(ab)Using a Fuzzer to do Hypertesting</h2>
+
+      <p class="text-gray-300 mb-4">
+        In the grey-box fuzzers such as <a href="https://github.com/google/AFL" class="text-blue-400 hover:underline">AFL</a> and <a href="https://github.com/AFLplusplus/AFLplusplus" class="text-blue-400 hover:underline">its</a> <a href="https://llvm.org/docs/LibFuzzer.html" class="text-blue-400 hover:underline">ilk</a>, the fuzzer produces an input that is a plain old byte-array.
+        The 'libFuzzer' harness is seen as the default for implementing a fuzzer harness; and most fuzzers will support it.
+        Here's a minimal example:
+      </p>
+
+      <div class="px-16 pb-4">
+        <pre><code class="language-c">int LLVMFuzzerTestOneInput(const uint8_t *Data, size_t Size) {
+  myTestFunction(Data, Size); // run the functionality you want to test
+  return 0;
+}</code></pre>
+      </div>
+
+      <p class="text-gray-300 mb-4">
+        For a program that takes a string as input (such as a parser), building such a harness is trivial.
+        For a program that takes more complex inputs, you need to construct the required types from the byte-array.
+        We can use this to construct a hypertest like so:
+      </p>
+
+      <div class="px-12 pb-4">
+        <pre><code class="language-c">int LLVMFuzzerTestOneInput(const uint8_t *Data, size_t Size) {
+  int secret_val, alt_secret_val;
+  if (Size != sizeof(secret_val) + sizeof(alt_secret_val)) {
+    // let's only use inputs if they're exactly the right size
+    return 0;
+  }
+
+  // Read the variable values out from the byte-array Data
+  secret_val = *(int *)Data;
+  alt_secret_val = *(int *)(Data + sizeof(secret_val));
+
+  // Check that the 'my_leaky_func' returns the same value for both
+  assert(my_leaky_func(secret_val) == my_leaky_func(alt_secret_val));  
+
+  return 0;
+}</code></pre>
+      </div>
+
+      <h2 class="text-2xl font-bold mb-4">Public Inputs</h2>
+
+      <p class="text-gray-300 mb-4">
+        So far we've just been looking at that one trivial example function (my_leaky_func) that takes a single secret input.
+        In reality, we need to deal with systems that can also take public (non-confidential) input - e.g. <a href="https://en.wikipedia.org/wiki/Heartbleed" class="text-blue-400 hover:underline">Heartbleed</a> was triggered by a packet that anyone could send.
+      </p>
+      <p class="text-gray-300 mb-4">
+        Demonstrating the presence of an information leak with a hypertest in this case requires an extra constraint: the value of any public (non-confidential) input parts must be the same for both tests.
+        <em>Why?</em> Because if the public input part differs, the differing outputs could be solely due to that; meaning that no information from the secret part is disclosed.
+      </p>
+      <p class="text-gray-300 mb-4">
+        Modifying our harness from above:
+      </p>
+
+      <div class="px-12 pb-4">
+        <pre><code class="language-c">int my_other_leaky_func(int public_val, int secret_val) {
+  if (public_val == 42) {
+    return secret_val > 0;
+  } else {
+    return 0;
+  }
+}
+          
+int LLVMFuzzerTestOneInput(const uint8_t *Data, size_t Size) {
+  int public_val, secret_val, alt_secret_val;
+  if (Size != 3 * sizeof(int)) {
+    // let's only use inputs if they're exactly the right size
+    return 0;
+  }
+
+  // Read the variable values out from the byte-array Data
+  public_val = *(int *)Data;
+  int pos = sizeof(public_val);
+  secret_val = *(int *)(Data + pos);
+  pos += sizeof(secret_val);
+  alt_secret_val = *(int *)(Data + pos);
+
+  // Check that the 'my_other_leaky_func' returns the same value for both
+  assert(
+    my_other_leaky_func(public_val, secret_val) == 
+    my_other_leaky_func(public_val, alt_secret_val)
+  );  
+
+  return 0;
+}</code></pre>
+      </div>
+
+      <p class="text-gray-300 mb-4">
+        For the example above, we could trigger a crash through the assertion with {"public_val": 42, "secret_val": 0, "alt_secret_val": 1} which results in return values of 0 and 1 respectively.
+        Notice that {"public_val": 0, "secret_val": ?, "alt_secret_val": ?} does not trigger the assertion as the 'else' branch of my_other_leaky_func is always taken - thus always returning 0.
+      </p>
+
+      <h2 class="text-2xl font-bold mb-4">Caching</h2>
+
+      <p class="text-gray-300 mb-4">
+        The issue with using a setup like the harness above is that you potentially need to test every <em>pair</em> of tests (with matching public part and differing secret parts).
+        This means that if there are <em>n</em> different possible secret inputs then you need to run &#8776;n<sup>2</sup> tests to get them all.
+        For the examples, with a 32-bit int as input, this means &#8776;(2<sup>32</sup>)<sup>2</sup> or 2<sup>64</sup> executions - and that's just for each public input (and there are 2<sup>32</sup> of those).
+      </p>
+      <p class="text-gray-300 mb-4">
+        Really, we only care if there are any pairs (with matching public input parts) that result in differing outputs.
+        This means that we can get away with storing only the output for each different public input.
+        To do this, we need only store a mapping from <em>public input</em> to <em>(public) output</em>.
+        A pseudocode (Python) implementation of a fuzzer doing this is as follows:
+      </p>
+
+      <div class="px-12 pb-4">
+        <pre><code class="language-python">output_for_input = {}
+
+# main fuzzing loop - runs indefinitely
+while True:
+  public_input, secret_input = get_input()
+  public_output = my_other_leaky_func(public_input, secret_input)
+  if public_input not in output_for_input:
+    output_for_input[public_input] = public_output    
+    continue
+
+  if public_output != output_for_input[public_input]:
+    print(f'Found a failing hypertest for {public_input}!')</code></pre>
+      </div> 
+
+      <p class="text-gray-300 mb-4">
+        With this we can find out that there is a failing hypertest (and thus information leak), but we don't have enough information to reproduce it.
+        For that, we need to also store the <em>secret input</em> that produced each output:
+      </p>
+
+      <div class="px-12 pb-4">
+        <pre><code class="language-python">hypertest_map = {}
+while True:
+  public_input, secret_input = get_input()
+  public_output = my_other_leaky_func(public_input, secret_input)
+  if public_input not in hypertest_map:
+    hypertest_map[public_input] = (secret_input, public_output)
+    continue
+
+  alt_secret_input, alt_public_output = hypertest_map[public_input]
+  if public_output != alt_public_output:
+    failing_hypertest = [
+      {"public_input": public_input, "secret_input": secret_input},
+      {"public_input": public_input, "secret_input": alt_secret_input}
+    ]
+    print(f'Found a failing hypertest: {failing_hypertest}')</code></pre>
+      </div> 
+
+      <p class="text-gray-300 mb-4">
+        With the aid of this dictionary, <em>hypertest_map</em>, we need to only execute each secret input once; taking us from O(n<sup>2</sup>) to O(n)!
+      </p>
+
+      <h2 class="text-2xl font-bold mb-4">Handling 100,000,000 inputs (and outputs)</h2>
+
+      <p class="text-gray-300 mb-4">
+        There is clearly a computational gain to be made by caching the input-output data in this way.
+        But one thing to bear in mind is the sheer number of inputs executed when fuzzing - it is not uncommon to see 10,000 or even over 100,000 executions per second (per CPU core).
+        Then factor in that fuzzing campaigns run for hours to days.
+        Doing the math, at the low end that's 10,000 * 3600 * 24 = 864,000,000 inputs executed over 24 hours.
+        For our example, that potentially means &#8776;10GB of raw data: 4 bytes for each key (<em>public input</em>), and 8 bytes for the corresponding value (<em>secret input</em> and <em>public_output</em>).
+      </p>
+      <p class="text-gray-300 mb-4">
+        Unfortunately, an awful lot of real-world programs take much larger inputs than that - and can produce even larger outputs.
+        To save space, we can lean even further on the fact that we only care about failing hypertests.
+        We can store only a hash of each input or output - then if we find that find that there is a differing output, we can store that in full and wait until we see another one:
+      </p>
+
+      <div class="px-12 pb-4">
+        <pre><code class="language-python"># We will now store a mapping from {public_input_hash:
+# (secret_input_hash, public_output_hash, secret_input_full)}
+hypertest_map = {}
+
+while True:
+  public_input, secret_input = get_input()
+  public_output = my_other_leaky_func(public_input, secret_input)
+  public_input_hash = hash(public_input)
+
+  if public_input_hash not in hypertest_map:
+    # Leave the 'secret_input_full' empty for now, to save memory
+    hypertest_map[public_input] = (secret_input, public_output, None)
+    continue
+
+  # We have seen this public input before, so fetch it
+  existing = hypertest_map[public_input_hash]
+  alt_sec_in_hash, alt_pub_out_hash, alt_sec_in_full = existing
+
+  if hash(public_output) == alt_public_output_hash:
+    # We got the same output as the other one(s)
+    continue
+
+  if alt_sec_in_full is None:
+    # This is a different output, but we didn't store a full 
+    # secret input yet
+    hypertest_map[public_input_hash] = (
+      hash(secret_input), hash(public_output), secret_input
+    )
+    continue
+
+  failing_hypertest = [
+    {"public_input": public_input, "secret_input": secret_input},
+    {"public_input": public_input, "secret_input": alt_sec_in_full}
+  ]
+  print(f'Found a failing hypertest: {failing_hypertest}')</code></pre>
+      </div> 
+
+      <p class="text-gray-300 mb-4">
+        This means that we are only storing hashes of the input-output data, up until a failing hypertest is witnessed. 
+        Now that we know there's a failing hypertest to be found, we can store the full secret input.
+        And then, the next time we observe the original output (or another unseen output), we can output the complete pair of tests.
+        This means that regardless of input or output size, we can cache enough information to detect information leaks for fuzzing campaigns.
+      </p>
+
+      <h2 class="text-2xl font-bold mb-4">Caveats</h2>
+
+      <p class="text-gray-300 mb-4">
+        For hypertesting to work, the program must be deterministic - if it is not, then we may observe differences in output that are due to non-determinism rather than information leakage.
+        In my <a href="https://link.springer.com/article/10.1007/s10664-024-10556-3" class="text-blue-400 hover:underline">early work on detecting information leaks with fuzzers</a>, I worked around this by simply <a href="https://github.com/DanBlackwell/LeakFuzzer/blob/92fd0e9fe1471dbdcf10fe8caabafc62a00a491a/src/afl-fuzz-leakage-utils.c#L249" class="text-blue-400 hover:underline">rerunning each test in the failing hypertest 100 times</a>.
+        If the output varied at all, I simply discarded the pair rather than report the information leak; resulting in false negatives.
+      </p>
+
+      <h2 class="text-2xl font-bold mb-4">Summary</h2>
+
+      <p class="text-gray-300 mb-4">
+        Information leaks are a violation of the non-interference property, which is a hyperproperty.
+        We can show the presence of an information leak by finding a pair of tests with matching public inputs and differing secret inputs, that produce differing outputs.
+        Assuming that the program we are testing produces deterministic output, the difference between the 2 outputs must be due to information in the secret input.
+      </p>
+      <p class="text-gray-300 mb-4">
+        We can construct a fuzzing harness that generates a single public input and two secret inputs, then runs the functionality twice and asserts that the output is the same.
+        This requires testing each pair of secret inputs, giving us an O(n<sup>2</sup>) solution.
+        We can get this down to O(n) by holding a mapping from public inputs to outputs, but given the number of executions in a typical fuzzing campaign, this can use too much memory for large inputs and outputs.
+        Instead, we can store a hash of the necessary values, and only bother to store the full values when we know that a failing hypertest exists.
+      </p>
+
+<sup id="footnote1">1</sup> This could be potentially used in a denial-of-service attack <a href="#ref1">↩</a></li><br>
+<sup id="footnote2">2</sup> A full list can be found <a href="https://github.com/secure-software-engineering/SuSi/tree/develop/SourceSinkLists/Android%204.2/SourcesSinks" class="text-blue-400 hover:underline">here <a href="#ref2">↩</a></li></a>.
+    </div>
+  </div>
+
+  <!-- Credit for Background Image -->
+  <div class="fixed bottom-0 left-0 w-full bg-gray-800 bg-opacity-75 text-gray-300 text-sm p-2 rounded-tl-lg">
+    Background Photo of the City of London at night by <a href="https://unsplash.com/@christopher__burns?utm_content=creditCopyText&utm_medium=referral&utm_source=unsplash" class="underline">Christopher Burns</a> on <a href="https://unsplash.com/photos/aerial-photography-of-city-scapes-at-nighttime-4NIpiAP3-2Q?utm_content=creditCopyText&utm_medium=referral&utm_source=unsplash" class="underline">Unsplash</a>
+  </div>
+
+  <script>
+    // JavaScript to toggle the mobile menu and stats visibility
+    function toggleMenu() {
+      const menu = document.getElementById('mobile-menu');
+      menu.classList.toggle('hidden');
+    }
+  </script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+  <script>hljs.highlightAll();</script>
+</body>
+</html>

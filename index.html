@@ -26,7 +26,7 @@
 </head>
 <body class="bg-black text-gray-100 font-mono bg-fixed bg-cover bg-center bg-no-repeat min-h-screen overflow-x-hidden", style="background-image: url(./background.jpg);">
   <!-- Navigation Bar -->
-  <div class="bg-black text-gray-100 shadow-md fixed w-full z-50 h-8">
+  <div class="bg-black text-gray-100 shadow-md fixed top-0 w-full z-50">
     <div class="mx-auto flex justify-between items-center">
       <!-- Hamburger Button (Visible on Small Screens) -->
       <button class="block md:hidden text-gray-100 hover:text-green-400 focus:outline-none" onclick="toggleMenu()">
@@ -42,7 +42,8 @@
 
       <!-- Tab Menu (Hidden on Small Screens) -->
       <div class="hidden md:flex">
-        <a href="index.html" class="px-6 py-2 bg-gray-900 text-white border-r border-gray-700">1: Home</a>
+        <a href="index.html" class="px-6 py-1 bg-gray-800 text-white border-b border-x border-gray-700">1: Home</a>
+        <a href="blog.html" class="px-6 py-1 bg-black text-white border-b border-x border-gray-700">2: Blog</a>
       </div>
   
       <!-- Filler Space to Extend Black Background -->
@@ -58,7 +59,8 @@
 
   <!-- Mobile Menu (Initially Hidden) -->
   <div id="mobile-menu" class="hidden md:hidden bg-black fixed top-8 w-full z-20">
-    <a href="index.html" class="block px-4 py-2 text-gray-400 hover:text-white">1: Home</a>
+    <a href="index.html" class="block px-4 py-2 text-gray-100 hover:text-white">1: Home</a>
+    <a href="blog.html" class="block px-4 py-2 text-gray-400 hover:text-white">2: Blog</a>
   </div>
 
   <!-- Main Content -->
@@ -89,14 +91,14 @@
 
         <div class="grid-layout">
           <span class="text-green-500">$</span>
-          <div>Hello, I'm <span class="text-blue-400">Dan Blackwell</span>.</div>
+          <div>Hello, I'm <span class="text-green-400">Dan Blackwell</span>.</div>
           
           <span class="text-green-500">$</span>
           <div>I'm a <span class="text-yellow-400">Software Engineer</span> and <span class="text-yellow-400">Researcher</span> based in London, UK.</div>
 
           <span class="text-green-500">$</span>
           <div>
-            I am currently finishing my PhD at <a href="https://www.ucl.ac.uk/computer-science/" class="text-blue-400 hover:underline">UCL</a> which has been funded by the <a href="https://www.ucl.ac.uk/cybersecurity-cdt/" class="text-blue-400 hover:underline">Centre for Doctoral Training in Cybersecurity</a>.
+            I have just finished my PhD at <a href="https://www.ucl.ac.uk/computer-science/" class="text-blue-400 hover:underline">UCL</a> which has been funded by the <a href="https://www.ucl.ac.uk/cybersecurity-cdt/" class="text-blue-400 hover:underline">Centre for Doctoral Training in Cybersecurity</a>.
             Here I have been working on <a href="https://en.wikipedia.org/wiki/Fuzzing" class="text-blue-400 hover:underline">fuzzing</a> - a form of automated software testing. 
             Most of the PhD work is on applying fuzzing to the task of detecting leakage of confidential information in programs, though the later work is on strategies to improve program exploration when using a fuzzer to search for any type of bug.
           </div>
@@ -112,6 +114,9 @@
 
           <div></div>
           <div><span class="text-green-500">➜</span> <a href="https://scholar.google.com/citations?user=VHjSSIAAAAAJ" class="text-blue-400 hover:underline">Google Scholar</a></div>
+
+          <div></div>
+          <div><span class="text-green-500">➜</span> <a href="blog.html" class="text-blue-400 hover:underline">Blog</a></div>
 
           <span class="text-green-500">$</span> 
           <div>You can contact me here:</div>
@@ -134,7 +139,7 @@
 
   <!-- Credit for Background Image -->
   <div class="bottom-0 left-0 bg-gray-800 bg-opacity-75 text-gray-300 text-sm p-2 rounded-tl-lg">
-    Background Photo of the City of London at night by <a href="https://unsplash.com/@christopher__burns?utm_content=creditCopyText&utm_medium=referral&utm_source=unsplash">Christopher Burns</a> on <a href="https://unsplash.com/photos/aerial-photography-of-city-scapes-at-nighttime-4NIpiAP3-2Q?utm_content=creditCopyText&utm_medium=referral&utm_source=unsplash">Unsplash</a>
+    Background Photo of the City of London at night by <a href="https://unsplash.com/@christopher__burns?utm_content=creditCopyText&utm_medium=referral&utm_source=unsplash" class="underline">Christopher Burns</a> on <a href="https://unsplash.com/photos/aerial-photography-of-city-scapes-at-nighttime-4NIpiAP3-2Q?utm_content=creditCopyText&utm_medium=referral&utm_source=unsplash" class="underline">Unsplash</a>
   </div>
 
   <script>
