@@ -143,7 +143,7 @@
         Let's look at a very simple example to start with; we'll look at a single function that takes a secret (confidential) input and returns a public (non-confidential) output. Throughout these examples we will treat the return value as the 'program' output - in practice this is really things like stdout, outgoing network requests, and log files.
       </p>
 
-      <div class="px-16 pb-4">
+      <div class="px-12 pb-4">
         <pre><code class="language-c">int my_leaky_func(int secret_input) {
   if (secret_input > 0) {
     return 1;
@@ -231,7 +231,7 @@
         Here's a minimal example:
       </p>
 
-      <div class="px-16 pb-4">
+      <div class="px-12 pb-4">
         <pre><code class="language-c">int LLVMFuzzerTestOneInput(const uint8_t *Data, size_t Size) {
   myTestFunction(Data, Size); // run the functionality you want to test
   return 0;

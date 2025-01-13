@@ -142,7 +142,7 @@ mySecondArray contents: [81, 35, 246, 228, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1
         Let's look at how stack memory is reused in this example program:
       </p>
 
-      <div class="px-16 pb-4">
+      <div class="px-12 pb-4">
         <pre><code class="language-c">int main(void) {
   char superSecret[] = {'P','a','s','s','w','0','r','d','1'};
   mySecretHandler(superSecret, sizeof(superSecret));
@@ -211,7 +211,7 @@ void myOtherFunction() {
         Let's take the following struct definition as an example:
       </p>
 
-      <div class="px-16 pb-4">
+      <div class="px-12 pb-4">
         <pre><code class="language-c">struct Move {
   char direction; // 1 byte
   int distance; // 4 bytes
@@ -223,7 +223,7 @@ void myOtherFunction() {
         We can confirm this by printing out the memory addresses using the following program:
       </p>
 
-      <div class="px-16 pb-4">
+      <div class="px-12 pb-4">
         <pre><code class="language-c">int main(void) {
   const char UP = 0, LEFT = 1, DOWN = 2, RIGHT = 3;
   struct Move myMoves[] = {{ UP, 16 }, { LEFT, 8 }};
@@ -250,7 +250,7 @@ void myOtherFunction() {
         Let's take a look at a real example of an information leak from stack memory through struct padding from the Linux kernel - <a href="https://nvd.nist.gov/vuln/detail/CVE-2009-2847" class="text-blue-400 hover:underline">CVE-2009-2847</a>:
       </p>
 
-      <div class="px-16 pb-4">
+      <div class="px-12 pb-4">
         <pre><code class="language-c">typedef struct sigaltstack {
   void __user *ss_sp;
   int ss_flags;
@@ -380,7 +380,7 @@ do_sigaltstack (const stack_t __user *uss,
         Let's look this kernel example again, but simplified even further this time and with a fuzzing harness:
       </p>
 
-      <div class="px-16 pb-4">
+      <div class="px-12 pb-4">
         <pre><code class="language-c">// Our target function requires this struct
 typedef struct sigaltstack {
   void __user *ss_sp;
