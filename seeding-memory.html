@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/png" href="/my-favicon/favicon-96x96.png" sizes="96x96" />
+  <link rel="icon" type="image/svg+xml" href="/my-favicon/favicon.svg" />
+  <link rel="shortcut icon" href="/my-favicon/favicon.ico" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/my-favicon/apple-touch-icon.png" />
+  <link rel="manifest" href="/my-favicon/site.webmanifest" />
+  <link href="./output.css" rel="stylesheet">
+  <link href="./glass.css" rel="stylesheet">
+  <title>Seeding Memory Values</title>
+  <script>
+    // JavaScript to update time dynamically
+    function updateTime() {
+      const now = new Date();
+      const time = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const date = now.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+      document.getElementById('time').innerText = `${time}`;
+      document.getElementById('date').innerText = `${date}`;
+    }
+    setInterval(updateTime, 1000); // Update every second
+    window.onload = updateTime;   // Initialize on load
+  </script>
+  <style>
+    pre {
+        background-color: #282c34;  /* Dark background */
+        padding: 0px;               /* Reduced padding inside the code block */
+        border-radius: 4px;         /* Optional: rounded corners */
+        overflow-x: auto;           /* Ensure horizontal scrolling */
+        margin: 0;                  /* Remove margin around the <pre> block */
+    }
+    code {
+        padding: 0;                 /* Remove padding inside <code> */
+    }
+  </style>
+</head>
+<body class="bg-black text-gray-100 font-mono bg-fixed bg-cover bg-center bg-no-repeat min-h-screen overflow-x-hidden", style="background-image: url(./background.jpg);">
+  <!-- Navigation Bar -->
+  <div class="bg-black bg-opacity-80 text-gray-100 shadow-md fixed top-0 w-full z-50">
+    <div class="mx-auto flex justify-between items-center">
+      <!-- Hamburger Button (Visible on Small Screens) -->
+      <button class="block md:hidden text-gray-100 hover:text-green-400 focus:outline-none" onclick="toggleMenu()">
+      <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path>
+      </svg>
+      </button>
+
+      <!-- Left Section: Name -->
+      <div class="px-4 pr-8 text-green-400 font-mono text-lg ml-0">
+        Dan Blackwell
+      </div>
+
+      <!-- Tab Menu (Hidden on Small Screens) -->
+      <div class="hidden md:flex">
+        <a href="index.html" class="px-6 py-1 bg-black text-white border-b border-x border-gray-700">1: Home</a>
+        <a href="blog.html" class="px-6 py-1 bg-gray-800 text-white border-b border-x border-gray-700">2: Blog</a>
+      </div>
+  
+      <!-- Filler Space to Extend Black Background -->
+      <div class="flex-grow bg-black h-full"></div>
+
+      <!-- Stats Section -->
+      <div class="flex items-center space-x-4 px-4 bg-black">
+        <div id="date" class="text-gray-400"></div>
+        <div id="time" class="text-gray-400"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mobile Menu (Initially Hidden) -->
+  <div id="mobile-menu" class="hidden md:hidden bg-black fixed top-8 w-full z-20">
+    <a href="index.html" class="block px-4 py-2 text-gray-400 hover:text-white">1: Home</a>
+    <a href="blog.html" class="block px-4 py-2 text-gray-100 hover:text-white">2: Blog</a>
+  </div>
+
+  <!-- Main Content -->
+  <div class="max-w-4xl min-h-screen mx-auto pt-24 pb-16">
+    <div class="px-8 py-8 bg-gray-900 bg-opacity-95 rounded-lg shadow-lg">
+      <h1 class="text-4xl font-bold mb-4">Detecting Info Leaks from Uninitialised Memory by Seeding Memory Values (or a poor man's MSan)</h1>
+      <p class="text-gray-300 text-sm mb-4 text-gray-400">
+        NOTE: This explains explains one of the concepts used in LeakFuzzer (<a href="https://github.com/DanBlackwell/LeakFuzzer" class="text-blue-400 hover:underline">[source here]</a> <a href="https://link.springer.com/content/pdf/10.1007/s10664-024-10556-3.pdf" class="text-blue-400 hover:underline">[paper here]</a>) and NIFuzz (<a href="https://github.com/DanBlackwell/NIFuzz" class="text-blue-400 hover:underline">[source here]</a>).
+      </p>
+
+      <p class="text-gray-300 mb-4">
+        This post explains part of the approach taken in my work on <a href="./fuzzing-for-info-leaks.html" class="text-blue-400 hover:underline">finding information leaks with fuzzers</a>.
+        In particular, it explains how we can consistently detect information making its way to program output from uninitialised memory sources.
+        These can be in-bounds reads of variables that have not been (fully) initialised, or out-of-bounds reads.
+      </p>
+      <p class="text-gray-300 mb-4">
+        Information leaks can most obviously be concerning because they can reveal confidential data such as <a href="https://krebsonsecurity.com/2014/04/heartbleed-bug-exposes-passwords-web-site-encryption-keys/" class="text-blue-400 hover:underline">user passwords, encryption keys, or other personal data</a>.
+        But they can be also used to bypass security mechanisms such as <a href="https://en.wikipedia.org/wiki/Address_space_layout_randomization#Limitations" class="text-blue-400 hover:underline">ASLR</a>, <a href="https://en.wikipedia.org/wiki/Buffer_overflow_protection#Canaries" class="text-blue-400 hover:underline">stack canaries</a>, or <a href="https://lwn.net/Articles/718888/" class="text-blue-400 hover:underline">PAC</a>; making it possible to gain a foothold in a system for further exploitation.
+      </p>
+
+      <h2 class="text-2xl font-bold mb-4">Memory Reuse</h2>
+
+      <p class="text-gray-300 mb-4">
+        In C and C++, memory is not zeroed (cleared) when you relinquish ownership; in C++ this is part of the <a href="https://en.cppreference.com/w/cpp/language/Zero-overhead_principle" class="text-blue-400 hover:underline">'zero-overhead principle'</a> - i.e. "you don't pay for what you don't use".
+        This is an issue when combined with uninitialised memory reads, as the reused memory could still contain sensitive information.
+      </p>
+
+      <h2 class="text-xl font-bold mb-4">Heap Memory Reuse</h2>
+
+      <p class="text-gray-300 mb-4">
+        To start off with let's look at how heap memory is allocated in this trivial example program:
+      </p>
+
+      <div class="px-12 pb-4">
+        <pre><code class="language-c">int main(void) {
+  char *myFirstArray = (char *)malloc(25);
+  // populate myFirstArray = [0, 1, 2, 3, ..., 24]
+  for (int i = 0; i < 25; i++) myFirstArray[i] = i;
+  free(myFirstArray);
+  char *mySecondArray = (char *)malloc(25);
+  // Print out the memory addresses at the start of the arrays
+  printf("myFirstArray: %p, mySecondArray: %p\n", myFirstArray, mySecondArray);
+  printf("mySecondArray contents: [%hhu", mySecondArray[0]);
+  for (int i = 1; i < 25; i++) printf(", %hhu", mySecondArray[i]);
+  printf("]\n");
+}</code></pre>
+      </div>
+
+      <p class="text-gray-300 mb-4">
+        Running this program produces the output:
+      </p>
+      <p class="text-gray-300 mb-4">
+        <pre><code>myFirstArray: 0x5e4f623512a0, mySecondArray: 0x5e4f623512a0
+mySecondArray contents: [81, 35, 246, 228, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 17, 18, 19, 20, 21, 22, 23, 24]</code></pre>
+      </p>
+      <p class="text-gray-300 mb-4 pt-4">
+        Notice that the addresses of `myFirstArray` and `mySecondArray` are the same; this is because after freeing `myFirstArray`, the subsequent malloc call reuses that (now free) space.
+        Check it out for yourself with the <a href="https://godbolt.org/#g:!((g:!((g:!((h:codeEditor,i:(filename:'1',fontScale:14,fontUsePx:'0',j:1,lang:___c,selection:(endColumn:2,endLineNumber:13,positionColumn:1,positionLineNumber:4,selectionStartColumn:2,selectionStartLineNumber:13,startColumn:1,startLineNumber:4),source:'%23include+%3Cstdlib.h%3E%0A%23include+%3Cstdio.h%3E%0A%0Aint+main(void)+%7B%0A++char+*myFirstArray+%3D+(char+*)malloc(25)%3B%0A++for+(int+i+%3D+0%3B+i+%3C+25%3B+i%2B%2B)+myFirstArray%5Bi%5D+%3D+i%3B%0A++free(myFirstArray)%3B%0A++char+*mySecondArray+%3D+(char+*)malloc(25)%3B%0A++printf(%22myFirstArray:+%25p,+mySecondArray:+%25p%5Cn%22,+myFirstArray,+mySecondArray)%3B%0A++printf(%22mySecondArray+contents:+%5B%25hhu%22,+mySecondArray%5B0%5D)%3B%0A++for+(int+i+%3D+1%3B+i+%3C+25%3B+i%2B%2B)+printf(%22,+%25hhu%22,+mySecondArray%5Bi%5D)%3B%0A++printf(%22%5D%5Cn%22)%3B%0A%7D%0A'),l:'5',n:'0',o:'C+source+%231',t:'0')),k:50,l:'4',n:'0',o:'',s:0,t:'0'),(g:!((h:executor,i:(argsPanelShown:'1',compilationPanelShown:'0',compiler:cclang1500,compilerName:'',compilerOutShown:'0',execArgs:'',execStdin:'',fontScale:14,fontUsePx:'0',j:1,lang:___c,libs:!(),options:'',overrides:!(),runtimeTools:!(),source:1,stdinPanelShown:'1',wrap:'1'),l:'5',n:'0',o:'Executor+x86-64+clang+15.0.0+(C,+Editor+%231)',t:'0')),header:(),k:50,l:'4',n:'0',o:'',s:0,t:'0')),l:'2',n:'0',o:'',t:'0')),version:4" class="text-blue-400 hover:underline">Godbolt Compiler Explorer</a> (note that the addresses will change between executions due to ASLR).
+        It is due to this memory reuse that uninitialised heap allocations can potentially hold sensitive information - notice how the final line of output still contains the values [16, 17, ...24] in tact. 
+        The first part of the data - [0, 1, ...15] - has been clobbered; probably due to some bookkeeping by the `malloc` implementation.
+        Notably, the reuse of memory means that even if the memory either side of an allocation is currently unallocated, it could also still contain sensitive information from previous usage.
+      </p>
+
+      <h2 class="text-xl font-bold mb-4">Stack Memory Reuse</h2>
+
+      <p class="text-gray-300 mb-4">
+        Let's look at how stack memory is reused in this example program:
+      </p>
+
+      <div class="px-16 pb-4">
+        <pre><code class="language-c">int main(void) {
+  char superSecret[] = {'P','a','s','s','w','0','r','d','1'};
+  mySecretHandler(superSecret, sizeof(superSecret));
+  // (B)
+  printf("%s\n", superSecret);
+  myOtherFunction();
+}
+
+void mySecretHandler(char *secret, unsigned int length) {
+  // Allocate a buffer on the stack
+  char buffer[length];
+  // (A)
+  // reverse the secret, for some reason...
+  for (int i = 0; i &lt; length; i++) {
+    buffer[i] = secret[length - i - 1];
+  }
+  // Copy it back into `secret`
+  memcpy(secret, buffer, length);
+}
+
+void myOtherFunction() {
+  char anotherBuffer[9];
+  // (C)
+  ... // some other stuff
+}</code></pre>
+      </div>
+
+      <p class="text-gray-300 mb-4">
+        The following diagram shows the stack layout at the lines marked with comments (A) and (B):
+      </p>
+
+      <img src="./stack1.svg" alt="Stack Frame Diagram" class="w-full rounded-lg mb-4">
+
+      <p class="text-gray-300 mb-4">
+        Note that the stack grows downwards from high memory addresses to low memory addresses; hence the `main` function appears at the top.
+        The area indicated by each '{' or '}' symbol is called a 'stack frame', and there is one per currently called function.
+        Calling a function pushes a new stack frame, and returning from a function pops a stack frame.
+        The function return address (along with other information omitted from this diagram) is stored in the stack frame, followed by any local variables for the function.
+        The dark green stack frame is the currently active one, the light green is owned but not active, and the red hatched stack frame is no longer in scope.
+        Notice that the out-of-scope (red hatched) stack frame still contains the same data - i.e. it is not cleared.
+      </p>
+      <p class="text-gray-300 mb-4">
+        The next diagram shows the stack layout at the lines marked with comments (B) and (C):
+      </p>
+
+      <img src="./stack2.svg" alt="Stack Frame Diagram" class="w-full rounded-lg mb-4">
+
+      <p class="text-gray-300 mb-4">
+        The key point here is that in the right hand side of the diagram (at the line marked <strong>(C)</strong>), the stack frame for `myOtherFunction` occupies the space previously used by `mySecretHandler`.
+        In particular, the local variable `anotherBuffer` is at the same location as the `buffer` variable was in `mySecretHandler`.
+        And guess what? It can still contain the reversed secret that we never bothered clearing out!
+        Note, that this is not guaranteed; compilers have quite some freedom and are allowed to omit unused variables, and <em>inline</em> functions (copying and pasting the code into the call site) meaning that they get no stack frame of its own.
+      </p>
+
+      <h2 class="text-2xl font-bold mb-4">Struct Padding</h2>
+
+      <p class="text-gray-300 mb-4">
+        In C, struct members are guaranteed<sup><a href="#footnote1" id="ref1" class="text-blue-400 hover:underline">1</a></sup> to be layed out in the order they're defined.
+        Sometimes, in order to keep memory accesses aligned, the compiler will add padding between members.
+        On some platforms this is done purely for performance reasons, whereas others won't allow unaligned accesses.
+        The alignment is to some aribtrary boundary - generally multiples of 4, 8 or even 64 bytes (which is the size of a cache line).
+        This padding is opaque to the developer from the source code (though IIRC you can get the information post-compile with <a href="https://linux.die.net/man/1/pahole" class="text-blue-400 hover:underline">pahole</a>).
+      </p>
+
+      <p class="text-gray-300 mb-4">
+        Let's take the following struct definition as an example:
+      </p>
+
+      <div class="px-16 pb-4">
+        <pre><code class="language-c">struct Move {
+  char direction; // 1 byte
+  int distance; // 4 bytes
+}</code></pre>
+      </div>
+
+      <p class="text-gray-300 mb-4">
+        Here, despite storing just 5 bytes of actual information, the struct will take up 8 bytes in memory - with 3 bytes of padding sitting after the member `direction`, to align `distance` with a multiple of 4.
+        We can confirm this by printing out the memory addresses using the following program:
+      </p>
+
+      <div class="px-16 pb-4">
+        <pre><code class="language-c">int main(void) {
+  const char UP = 0, LEFT = 1, DOWN = 2, RIGHT = 3;
+  struct Move myMoves[] = {{ UP, 16 }, { LEFT, 8 }};
+  printf("myMove[0]: direction: %p, distance: %p\n", 
+         &myMoves[0].direction, &myMoves[0].distance);
+  printf("myMove[1]: direction: %p, distance: %p\n", 
+         &myMoves[1].direction, &myMoves[1].distance);
+}</code></pre>
+      </div>
+
+      <p class="text-gray-300 mb-4">
+        Even <a href="https://godbolt.org/#z:OYLghAFBqd5QCxAYwPYBMCmBRdBLAF1QCcAaPECAMzwBtMA7AQwFtMQByARg9KtQYEAysib0QXACx8BBAKoBnTAAUAHpwAMvAFYTStJg1AB9U8lJL6yAngGVG6AMKpaAVxYMQAJlIOAMngMmABy7gBGmMTeAGykAA6oCoS2DM5uHt7xickCAUGhLBFRXrGWmNYpQgRMxARp7p4%2BZRUCVTUEeSHhkTEW1bX1GU39HYFdhT0lAJQWqK7EyOwcAKReAMyByG5YANTLa44KBPioAHQI%2B9jLGgCC1zdHxK7WOwCyqABumHsA7ABC9x2QJ2yAQNR2%2BGI5RsAn2ANuwJ2gQIELwR0Mizh92WPwAIljbvdHs8UQAlTBfYhKdDvL6/eE3RHI1HohiYtYMxGg8GQ6EpAl3PEC%2B7MlhMQIQD6oPDoKb0wHA7nEHZyZR7Na4nYaUg7PzYABiABV1ZquDrcQB5ADqwRNOx8O1JAEkAOIACWN%2B01awFiOJL1p3xYAE9AwplgBWAERzVe%2BX/FXKHVcaK/XE6nF/XUGw06gAcaZx%2BI5CqBcWIyKoEFWXhDYcjfw0kdxIFRUJanj2XgjcR1%2BFZi1bqx7kccDBrGYRiOBq2idc%2BmHDUabMdOvI7GZK86%2BS8bzbXaOqbMwU19wPLlerXlroYXu64zdb65hneHvZZR8HXZHEbHE72U7Tl2c63juDYPquz4pJuIH1lGEG4geA4nsKgE7P6ZIUpE1KBjsIbkh8cHRrGGrxlmKY6qqaYZgmeY6nqRqFkKJZoReghVjW%2BEUkRK4tm2fJ2N%2B779p%2B7BCaO47XpOjJAcBXGEXeDa8Qe7YvjB8k8fuIkYihLEyWWFbsVeN4EURCFPngqkpEO3bCYeOk2T%2Bf5SQB%2BnTrOGmKfBWmWQJDDqcGpleX8CFIaJp56UWHAzLQnARrwngcFopCoJwjjoXMCzfKsaw8KQBCaNFMwANYgBG2qxRwkgJYVKWcLwCggNqBVJdFpBwLASCYKo5SuEQZAUBANTAAoyiGJgtBCAgqAAO6JXlaAsHEdBMC%2BY1BJN01zbVi3LfQUTIFshjAFw5XartdCRMErBLLwF37RafVTbNiXJd15Q3MQI31b4PXIFU%2BCJbw/CCCIYjsFIMiCIoKjqK1pC6GaBhGCApjGOYtB4GEjWQDMqBxC%2BjUcLwC7EBWWA4xAMxPIIeBsIaqAuJTMwKJlg5mkcgPrRNz3bdwvAzcQTBxJwPAxXFNXw6lHDYH9fUkDsqh5tEAC00SSCCyPADsp2nBoes7BAjg6rghAKzlXBTLwLVaFMMwIJgTBYFEVOkKV5X6Jw1WkK9JM/Y1zWFXbnscF4kvJdL1tBzMlJJHYkhAA%3D%3D%3D" class="text-blue-400 hover:underline">with the struct members swapped</a>, we see that the real memory footprint of the struct is 8 bytes (as the compiler adds trailing padding).
+      </p>
+
+    
+      <p class="text-gray-300 mb-4">
+        This padding is an issue, as we've seen already that memory gets reused.
+        Uninitialised data from these padding bytes could make its way to program output.
+      </p>
+
+      <h2 class="text-2xl font-bold mb-4">Struct Padding in the Wild</h2>
+
+      <p class="text-gray-300 mb-4">
+        Let's take a look at a real example of an information leak from stack memory through struct padding from the Linux kernel - <a href="https://nvd.nist.gov/vuln/detail/CVE-2009-2847" class="text-blue-400 hover:underline">CVE-2009-2847</a>:
+      </p>
+
+      <div class="px-16 pb-4">
+        <pre><code class="language-c">typedef struct sigaltstack {
+  void __user *ss_sp;
+  int ss_flags;
+  size_t ss_size;
+} stack_t;
+
+int
+do_sigaltstack (const stack_t __user *uss,
+                stack_t __user *uoss, 
+                unsigned long sp)
+{
+  stack_t oss; // (A)
+  ...
+  if (uoss) {
+    // (B)
+    oss.ss_sp = (void __user *) current->sas_ss_sp;
+    oss.ss_size = current->sas_ss_size;
+    oss.ss_flags = sas_ss_flags(sp);
+  }
+  ...
+  if (uoss) {
+    // (C)
+    if (copy_to_user(uoss, &oss, sizeof(oss)))
+  ...
+  }
+}</code></pre>
+      </div>
+
+      <p class="text-gray-300 mb-4">
+        As this is operating in kernel space, any memory values are potentially sensitive; and only variables marked with `__user` are accessible to user space (e.g. `const stack_t __user *uss`).
+        We see that at (A) `stack_t oss` is declared as a local variable (thus on the stack in kernel space), and then copied to user space at (C) by the `copy_to_user` function (which functions similarly to `memcpy`).
+        We also see that at (B), all 3 struct members are initialised.
+        At first glance, it would be expected that the `copy_to_user` function thus only copies across initialised values.
+        In fact, on 64-bit systems with 8-byte alignment, the struct is layed out like so:
+      </p>
+
+      <div class="pb-4">
+        <pre>+----------------+-----------+-----------+-----------+-----------+-----------+------------+
+| Offset (bytes) |    0-3    |    4-7    |    8-11   |   12-15   |   16-19   |    20-23   |
++----------------+-----------+-----------+-----------+-----------+-----------+------------+
+| Struct member  |         ss_sp         |  ss_flags | [padding] |        ss_size         |
++----------------+-----------+-----------+-----------+-----------+-----------+------------+</pre>
+      </div>
+
+      <p class="text-gray-300 mb-4">
+        Note the padding from bytes 12-15. This padding is not cleared, and the data from the uninitialised memory is copied to user space.
+        As the padding bytes are not directly accessible to us as a developer, we would need to use a call to `memset` in order to clear them.
+      </p>
+
+      <h2 class="text-2xl font-bold mb-4">So, Finding These Through Fuzzing is Easy?</h2>
+
+      <p class="text-gray-300 mb-4">
+        As I discussed <a href="./fuzzing-for-info-leaks.html" class="text-blue-400 hover:underline">here</a>; confirming an information leak can be done by finding a pair of tests with matching non-confidential (unprivileged) inputs and differing confidential (privileged) inputs that result in different non-confidential outputs.
+      </p>
+      <p class="text-gray-300 mb-4">
+        For the above Linux kernel example, the non-confidential inputs are the pointers `uss` and `uoss`, which are provided as arguments to the `do_sigaltstack` function. 
+        The non-confidential output is the <em>contents</em> of `uoss`, which are updated by the call to `copy_to_user`.
+      </p>
+      <p class="text-gray-300 mb-4">
+        We can consider anything apart from `uss` and `uoss` (and the contents of the structs they point to) as confidential - and given that this may contain values (due to memory reuse) that come from outside this function, we can consider it (confidential) input.
+      </p>
+      <p class="text-gray-300 mb-4">
+        So, given that we know that it is possible to leak information from stack memory due to the struct padding, it should be possible to find a series of function calls that will populate this padding with some 'interesting' information.
+        For example, if our goal was bypassing ASLR, this could be a pointer to a kernel object.
+      </p>
+      <p class="text-gray-300 mb-4">
+        The issue here is that when using an off-the-shelf fuzzer that generates byte-array inputs, we would need to construct a complex fuzzing harness to parse the byte-array input into a series of function calls.
+        <a href="https://github.com/google/syzkaller" class="text-blue-400 hover:underline">Syzkaller</a> is a specialised kernel fuzzer that generates sequences of syscalls and hence can do this; but I wanted a more general solution that kept fuzzing harnesses simple.
+      </p>
+      <p class="text-gray-300 mb-4">
+        Assuming that we create a fuzzing harness which <em>only</em> calls the `do_sigaltstack` function, we expect the values contained in the uninitialised stack memory to be the same for each execution.
+        If that is the case, then we can't find a pair of tests that differ in output, and hence demonstrate the leak.
+      </p>
+      <p class="text-gray-300 mb-4">
+        The whole reason that information leaks through uninitialised memory are dangerous is that the reused memory contains information that has been built up over time.
+        This is also true for information leaks from out-of-bounds memory reads - if nothing else has been allocated yet, then all you can possibly 'leak' is the zeroed memory that the OS gave you.
+        The fact that fuzzing harnesses need to execute quickly, essentially means that none of this will happen; making finding these issues through fuzzing unlikely.
+      </p>
+
+      <h2 class="text-2xl font-bold mb-4">How do we Find These Information Leaks Through Fuzzing Then?</h2>
+
+      <p class="text-gray-300 mb-4">
+        My approach is to literally treat the contents of uninitialised memory as an (confidential) input; then get the fuzzer to generate values to populate it.
+        I call this prepoluation process 'seeding' the memory contents.
+      </p>
+      <p class="text-gray-300 mb-4">
+        The following implementation details are specific to Unix-like systems.
+        As the stack is a fixed size (which can configured with `ulimit -s`), we can get this size at the start - I get the top and bottom from `/proc/self/maps` with the `get_stack_top` and `get_min_stack_bottom` functions <a href="https://github.com/DanBlackwell/NIFuzz/blob/f5b3b5a1485e11a8e4ad6c1541310ab928997e1c/benchmarks/memory.c" class="text-blue-400 hover:underline">in here</a>.
+        I also wrap the `malloc`, `realloc` and `free` functions (in the same file - each wrapper is the target function name prefixed with `__wrap_`).
+      </p>
+      <p class="text-gray-300 mb-4">
+        When landing in the fuzzing harness, I populate the stack with a repeated set of values provided by the fuzzer as part of the input - this is done with the <a href="https://github.com/DanBlackwell/NIFuzz/blob/master/benchmarks/memory.h#L31" class="text-blue-400 hover:underline">'FILL_STACK' macro here</a>.
+        The `malloc` (and family) wrappers use the same values to prepoulate sections of heap memory when they are allocated.
+      </p>
+      <p class="text-gray-300 mb-4">
+        The following psuedocode indicates how such a fuzzing harness is constructed:
+      </p>
+
+      <div class="px-12 pb-4">
+        <pre><code class="language-python">def fuzzer_harness(input):
+  # parse out the memory seed value and public (non-confidential) inputs
+  memory_seed, public_inputs = input.parse()
+  # If there are any setup functions, they must be called here
+  ...
+  # Populate the stack with the memory seed value
+  FILL_STACK(memory_seed)
+  # Call the target function (i.e. the functionality we wish to fuzz)
+  target_function(public_inputs)</code></pre>
+      </div>
+
+      <p class="text-gray-300 mb-4">
+        Notice that the `FILL_STACK` macro is used after any setup functions, so that all of the stack memory below the `fuzzer_harness` is seeded.
+        If it was used before the setup functions, then the seeded values would likely be clobbered by them.
+      </p>
+
+      <h2 class="text-2xl font-bold mb-4">Memory Seeding Values</h2>
+
+      <p class="text-gray-300 mb-4">
+        As the memory seeding functions repeatedly paste the provided `memory_seed` value into the memory area (stack or heap allocation) until it is full, I believe that the two best values to start with in order to maximise the chance of detecting a leak are 0b10101010 (0xAA) and 0b01010101 (0x55).
+        This is because every bit is flipped in one region compared to the other - meaning that even a single leaked bit will be discoverable in output.
+        This is not the case for more recognisable values like 0xDEADBEEF or 0xBADF00D.
+      </p>
+
+      <h2 class="text-2xl font-bold mb-4">Example</h2>
+
+      <p class="text-gray-300 mb-4">
+        Let's look this kernel example again, but simplified even further this time and with a fuzzing harness:
+      </p>
+
+      <div class="px-16 pb-4">
+        <pre><code class="language-c">// Our target function requires this struct
+typedef struct sigaltstack {
+  void __user *ss_sp;
+  int ss_flags;
+  size_t ss_size;
+} stack_t;
+
+// Fuzzing harness
+int LLVMFuzzerTestOneInput(const char *Data, unsigned int length) {
+  // This is our 'secret' input
+  char *memorySeed;
+  unsigned int memorySeedLength;
+  // `inputStack` and `inputSp` are the public inputs
+  stack_t inputStack;
+  unsigned long inputSp;
+  // This `outputStack` will be populated by `do_sigaltstack`
+  stack_t outputStack;
+
+  // (A)
+  // Parse the input into memory seed and public input
+  parseInput(Data, length, &memorySeed, &memorySeedLength, &inputStack, &inputSp);
+
+  // (B)
+  // Populate the stack with the memory seed value (repeated)
+  FILL_STACK(memorySeed, memorySeedLength);
+
+  // (C)
+  // Call the target function
+  int res = do_sigaltstack(&inputStack, &outputStack, inputSp);
+
+  // Output the results of the function call
+  write(stdout, &res, sizeof(res));
+  write(stdout, &outputStack, sizeof(outputStack));
+   
+  return 0;
+}
+
+// pretend that copy_to_user is a wrapper around memcpy
+void copy_to_user(void *dst, void *src, size_t size) {
+  memcpy(dst, src, size);
+}
+
+int do_sigaltstack (
+  const stack_t __user *uss,
+  stack_t __user *uoss, 
+  unsigned long sp
+) {
+  stack_t oss;
+  // (D)
+  oss.ss_sp = uss->ss_sp;
+  oss.ss_size = uss->ss_size;
+  oss.ss_flags = uss->ss_flags;
+  copy_to_user(uoss, &oss, sizeof(oss))
+  // (E)
+  return 0;
+}</code></pre>
+      </div>
+
+      <p class="text-gray-300 mb-4">
+        We will now walk through the stack memory contents at the different program points; to make things simpler, we consider only the local variables on the stack (pretending that there are no return address or arguments stored in each stack frame).
+        At the program point marked (A), the stack memory is as follows:
+      </p>
+
+      <div class="pb-8">
+        <table style="border-collapse: collapse;">
+          <thead>
+            <tr style="border: 1px solid white;">
+              <th style="border: 1px solid white; padding: 8px; width: 1%">Offset (bytes)</th>
+              <th style="border: 1px solid white; padding: 8px; width: 1%">Variable</th>
+              <th style="border: 1px solid white; padding: 8px;">Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">0-7</td>
+              <td style="border: 1px solid white; padding: 8px;">memorySeed</td>
+              <td style="border: 1px solid white; padding: 8px;">0</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">8-11</td>
+              <td style="border: 1px solid white; padding: 8px;">memorySeedLength</td>
+              <td style="border: 1px solid white; padding: 8px;">0</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">12-27</td>
+              <td style="border: 1px solid white; padding: 8px;">inputStack</td>
+              <td style="border: 1px solid white; padding: 8px;">{ NULL, 0, 0 }</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">28-35</td>
+              <td style="border: 1px solid white; padding: 8px;">inputSp</td>
+              <td style="border: 1px solid white; padding: 8px;">0</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">36-53</td>
+              <td style="border: 1px solid white; padding: 8px;">outputStack</td>
+              <td style="border: 1px solid white; padding: 8px;">{ NULL, 0, 0 }</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">54-</td>
+              <td style="border: 1px solid white; padding: 8px;">[unallocated]</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 0, 0, 0, 0, ... }</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="text-gray-300 mb-4">
+        At the program point marked (B), the call to `parse_input` has overwritten the memory contents below the current local variables (marked as [unallocated]). Now, our value of `memorySeed` depends on the input.
+        We have also populated the public inputs as follows: `inputStack` = { 0x11223344, 1, 20 }, `inputSp` = 0x55667788.
+        The resulting stack is as follows:
+      </p>
+
+      <div class="pb-8">
+        <table style="border-collapse: collapse;">
+          <thead>
+            <tr style="border: 1px solid white;">
+              <th style="border: 1px solid white; padding: 8px; width: 1%">Offset (bytes)</th>
+              <th style="border: 1px solid white; padding: 8px; width: 1%">Variable</th>
+              <th style="border: 1px solid white; padding: 8px;">Value when seed is {0xAA}</th>
+              <th style="border: 1px solid white; padding: 8px;">Value when seed is {0x55}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">0-7</td>
+              <td style="border: 1px solid white; padding: 8px;">memorySeed</td>
+              <td style="border: 1px solid white; padding: 8px;">Pointer to {0xAA}</td>
+              <td style="border: 1px solid white; padding: 8px;">Pointer to {0x55}</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">8-11</td>
+              <td style="border: 1px solid white; padding: 8px;">memorySeedLength</td>
+              <td style="border: 1px solid white; padding: 8px;">1</td>
+              <td style="border: 1px solid white; padding: 8px;">1</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">12-27</td>
+              <td style="border: 1px solid white; padding: 8px;">inputStack</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 0x11223344, 1, 20 }</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 0x11223344, 1, 20 }</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">28-35</td>
+              <td style="border: 1px solid white; padding: 8px;">inputSp</td>
+              <td style="border: 1px solid white; padding: 8px;">0x55667788</td>
+              <td style="border: 1px solid white; padding: 8px;">0x55667788</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">36-53</td>
+              <td style="border: 1px solid white; padding: 8px;">outputStack</td>
+              <td style="border: 1px solid white; padding: 8px;">{ NULL, 0, 0 }</td>
+              <td style="border: 1px solid white; padding: 8px;">{ NULL, 0, 0 }</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">54-</td>
+              <td style="border: 1px solid white; padding: 8px;">[unallocated]</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 200, 181, 14, 17, ... }</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 200, 181, 14, 17, ... }</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="text-gray-300 mb-4">
+        At the program point marked (C), We have seeded the stack memory below our current stack frame (notice that [unallocated] has changed):
+      </p>
+
+      <div class="pb-8">
+        <table style="border-collapse: collapse;">
+          <thead>
+            <tr style="border: 1px solid white;">
+              <th style="border: 1px solid white; padding: 8px; width: 1%">Offset (bytes)</th>
+              <th style="border: 1px solid white; padding: 8px; width: 1%">Variable</th>
+              <th style="border: 1px solid white; padding: 8px;">Value when seed is {0xAA}</th>
+              <th style="border: 1px solid white; padding: 8px;">Value when seed is {0x55}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">0-7</td>
+              <td style="border: 1px solid white; padding: 8px;">memorySeed</td>
+              <td style="border: 1px solid white; padding: 8px;">Pointer to {0xAA}</td>
+              <td style="border: 1px solid white; padding: 8px;">Pointer to {0x55}</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">8-11</td>
+              <td style="border: 1px solid white; padding: 8px;">memorySeedLength</td>
+              <td style="border: 1px solid white; padding: 8px;">1</td>
+              <td style="border: 1px solid white; padding: 8px;">1</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">12-27</td>
+              <td style="border: 1px solid white; padding: 8px;">inputStack</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 0x11223344, 1, 20 }</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 0x11223344, 1, 20 }</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">28-35</td>
+              <td style="border: 1px solid white; padding: 8px;">inputSp</td>
+              <td style="border: 1px solid white; padding: 8px;">0x55667788</td>
+              <td style="border: 1px solid white; padding: 8px;">0x55667788</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">36-53</td>
+              <td style="border: 1px solid white; padding: 8px;">outputStack</td>
+              <td style="border: 1px solid white; padding: 8px;">{ NULL, 0, 0 }</td>
+              <td style="border: 1px solid white; padding: 8px;">{ NULL, 0, 0 }</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">54-</td>
+              <td style="border: 1px solid white; padding: 8px;">[unallocated]</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 0xAA, 0xAA, 0xAA, ... }</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 0x55, 0x55, 0x55, ... }</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="text-gray-300 mb-4">
+        Now at program point (D), the formerly [unallocated] memory is being used to store local variables for `do_sigaltstack` (in this case, just `oss`):
+      </p>
+
+      <div class="pb-8">
+        <table style="border-collapse: collapse;">
+          <thead>
+            <tr style="border: 1px solid white;">
+              <th style="border: 1px solid white; padding: 8px; width: 1%">Offset (bytes)</th>
+              <th style="border: 1px solid white; padding: 8px; width: 1%">Variable</th>
+              <th style="border: 1px solid white; padding: 8px;">Value when seed is {0xAA}</th>
+              <th style="border: 1px solid white; padding: 8px;">Value when seed is {0x55}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">0-7</td>
+              <td style="border: 1px solid white; padding: 8px;">memorySeed</td>
+              <td style="border: 1px solid white; padding: 8px;">Pointer to {0xAA}</td>
+              <td style="border: 1px solid white; padding: 8px;">Pointer to {0x55}</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">8-11</td>
+              <td style="border: 1px solid white; padding: 8px;">memorySeedLength</td>
+              <td style="border: 1px solid white; padding: 8px;">1</td>
+              <td style="border: 1px solid white; padding: 8px;">1</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">12-27</td>
+              <td style="border: 1px solid white; padding: 8px;">inputStack</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 0x11223344, 1, 20 }</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 0x11223344, 1, 20 }</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">28-35</td>
+              <td style="border: 1px solid white; padding: 8px;">inputSp</td>
+              <td style="border: 1px solid white; padding: 8px;">0x55667788</td>
+              <td style="border: 1px solid white; padding: 8px;">0x55667788</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">36-53</td>
+              <td style="border: 1px solid white; padding: 8px;">outputStack</td>
+              <td style="border: 1px solid white; padding: 8px;">{ NULL, 0, 0 }</td>
+              <td style="border: 1px solid white; padding: 8px;">{ NULL, 0, 0 }</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">54-69</td>
+              <td style="border: 1px solid white; padding: 8px;">oss</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 0xAAAA..., 0xAAAAAAAA, 0xAAAA...}</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 0x5555..., 0x55555555, 0x5555... }</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">70-</td>
+              <td style="border: 1px solid white; padding: 8px;">[unallocated]</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 0xAA, 0xAA, 0xAA, ... }</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 0x55, 0x55, 0x55, ... }</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="text-gray-300 mb-4">
+        At program point (E), `do_sigaltstack`s local variable `oss` has been populated, and copied back into `uoss` (aka `outputStack`):
+      </p>
+
+      <div class="pb-8">
+        <table style="border-collapse: collapse;">
+          <thead>
+            <tr style="border: 1px solid white;">
+              <th style="border: 1px solid white; padding: 8px; width: 1%">Offset (bytes)</th>
+              <th style="border: 1px solid white; padding: 8px; width: 1%">Variable</th>
+              <th style="border: 1px solid white; padding: 8px;">Value when seed is {0xAA}</th>
+              <th style="border: 1px solid white; padding: 8px;">Value when seed is {0x55}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">0-7</td>
+              <td style="border: 1px solid white; padding: 8px;">memorySeed</td>
+              <td style="border: 1px solid white; padding: 8px;">Pointer to {0xAA}</td>
+              <td style="border: 1px solid white; padding: 8px;">Pointer to {0x55}</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">8-11</td>
+              <td style="border: 1px solid white; padding: 8px;">memorySeedLength</td>
+              <td style="border: 1px solid white; padding: 8px;">1</td>
+              <td style="border: 1px solid white; padding: 8px;">1</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">12-27</td>
+              <td style="border: 1px solid white; padding: 8px;">inputStack</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 0x11223344, 1, 20 }</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 0x11223344, 1, 20 }</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">28-35</td>
+              <td style="border: 1px solid white; padding: 8px;">inputSp</td>
+              <td style="border: 1px solid white; padding: 8px;">0x55667788</td>
+              <td style="border: 1px solid white; padding: 8px;">0x55667788</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">36-53</td>
+              <td style="border: 1px solid white; padding: 8px;">outputStack</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 0x11223344, 1, 20 }</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 0x11223344, 1, 20 }</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">54-69</td>
+              <td style="border: 1px solid white; padding: 8px;">oss</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 0x11223344, 1, 20 }</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 0x11223344, 1, 20 }</td>
+            </tr>
+            <tr style="border: 1px solid white;">
+              <td style="border: 1px solid white; padding: 8px;">70-</td>
+              <td style="border: 1px solid white; padding: 8px;">[unallocated]</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 0xAA, 0xAA, 0xAA, ... }</td>
+              <td style="border: 1px solid white; padding: 8px;">{ 0x55, 0x55, 0x55, ... }</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p class="text-gray-300 mb-4">
+        Note that the member values of `oss` have been copied from `inputStack` (as pointed to by `uss`).
+        The unseen 4 padding bytes between the second and third members (`ss_size` and `ss_flags`) have not been touched.
+        They are still {0xAA, 0xAA, 0xAA, 0xAA} or {0x55, 0x55, 0x55, 0x55} depending on the memory seed value.
+        As a result, the program outputs are as follows (assuming big-endian byte order for readability):
+      </p>
+
+      <div class="pb-4">
+        <pre><code>with seed {0xAA}: {0, 0, 0, 0, 0, 0x11, 0x22, 0x33, 0x44, 0, 0, 0, 1, 0xAA, 0xAA, 0xAA, 0xAA, 0, 0, 0, 0, 0, 0, 0, 20}
+with seed {0x55}: {0, 0, 0, 0, 0, 0x11, 0x22, 0x33, 0x44, 0, 0, 0, 1, 0x55, 0x55, 0x55, 0x55, 0, 0, 0, 0, 0, 0, 0, 20}</code></pre>
+      </div>
+
+      <p class="text-gray-300 mb-4">
+        Now we can see the difference in outputs due to the leaked information in the padding bytes, and we didn't have to construct a complex fuzzing harness to do so.
+        Notice also that if we were to read from the [unallocated] memory (requiring a buffer underflow) and output it, then we'd also observe a difference in output that is dependent on the memory seed value.
+        Finally, remember that we also seed heap memory allocations; and to make it possible to catch under- / over-reads, we over-allocate and seed either side of the returned buffer.
+      </p>
+
+      <h2 class="text-2xl font-bold mb-4">So, it's like MSan but worse?</h2>
+
+      <p class="text-gray-300 mb-4">
+        <a href="https://clang.llvm.org/docs/MemorySanitizer.html" class="text-blue-400 hover:underline">MemorySanitizer (MSan)</a> can detect certain uses of uninitialised memory; according to the docs it can detect the following: 'used in conditional branch', 'dereferenced uninitialised pointer', 'uninitialised value returned from function'.
+        Unfortunately in the above example, none of these conditions are met.
+        Additionally, due to their ability to weaken system defences such as ASLR and stack canaries, information leaks are of higher significance than <em>some</em> other uses of uninitialised memory.
+        Thus, being aware of their presence can be useful in prioritising bug fixes.
+      </p>
+      <p class="text-gray-300 mb-4">
+        Secondly, MSan uses a shadow memory to track the initialisation state.
+        It is possible that in some ultra constrained systems, where the 2x memory overhead is not viable, the memory seeding approach could be justified in its use.
+      </p>
+      <p class="text-gray-300 mb-4">
+        That being said, MSan offers much more fine grained detection of uninitialised memory uses; and I believe that it is preferable to run it when fuzzing in general.
+        The memory seeding approach could be used in triaging uninitialised memory uses that have already been detected by MSan.
+      </p>
+
+      <h2 class="text-2xl font-bold mb-4">Conclusion</h2>
+
+      <p class="text-gray-300 mb-4">
+        Memory seeding is an approach to populating memory with non-zero values, in order to make it possible to detect information leaks from uninitialised memory with simple fuzzing harnesses.
+        It works by taking a 'seed' value from the fuzzer as input, and repeatedly copying this value into stack memory, and new heap allocations.
+        To make it possible to detect under- and overflows in heap memory, the memory is over-allocated and seeded either side of the returned buffer.
+      </p>
+
+      <sup id="footnote1">1</sup> well, <a href="https://lwn.net/Articles/722293/" class="text-blue-400 hover:underline">not all of the time</a> <a href="#ref1">↩</a></li><br>
+    </div>
+  </div>
+
+  <!-- Credit for Background Image -->
+  <div class="bottom-0 left-0 bg-gray-800 bg-opacity-75 text-gray-300 text-sm p-2 rounded-tl-lg">
+    Background Photo of the City of London at night by <a href="https://unsplash.com/@christopher__burns?utm_content=creditCopyText&utm_medium=referral&utm_source=unsplash" class="underline">Christopher Burns</a> on <a href="https://unsplash.com/photos/aerial-photography-of-city-scapes-at-nighttime-4NIpiAP3-2Q?utm_content=creditCopyText&utm_medium=referral&utm_source=unsplash" class="underline">Unsplash</a>
+  </div>
+
+  <script>
+    // JavaScript to toggle the mobile menu and stats visibility
+    function toggleMenu() {
+      const menu = document.getElementById('mobile-menu');
+      menu.classList.toggle('hidden');
+    }
+  </script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+  <script>hljs.highlightAll();</script>
+</body>
+</html>
