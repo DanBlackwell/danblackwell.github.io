@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/png" href="/my-favicon/favicon-96x96.png" sizes="96x96" />
+  <link rel="icon" type="image/svg+xml" href="/my-favicon/favicon.svg" />
+  <link rel="shortcut icon" href="/my-favicon/favicon.ico" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/my-favicon/apple-touch-icon.png" />
+  <link rel="manifest" href="/my-favicon/site.webmanifest" />
+  <link href="./output.css" rel="stylesheet">
+  <link href="./glass.css" rel="stylesheet">
+  <title>Seeding Memory Values</title>
+  <script>
+    // JavaScript to update time dynamically
+    function updateTime() {
+      const now = new Date();
+      const time = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const date = now.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+      document.getElementById('time').innerText = `${time}`;
+      document.getElementById('date').innerText = `${date}`;
+    }
+    setInterval(updateTime, 1000); // Update every second
+    window.onload = updateTime;   // Initialize on load
+  </script>
+  <style>
+    pre {
+        background-color: #282c34;  /* Dark background */
+        padding: 0px;               /* Reduced padding inside the code block */
+        border-radius: 4px;         /* Optional: rounded corners */
+        overflow-x: auto;           /* Ensure horizontal scrolling */
+        margin: 0;                  /* Remove margin around the <pre> block */
+    }
+    code {
+        padding: 0;                 /* Remove padding inside <code> */
+    }
+  </style>
+</head>
+<body class="bg-black text-gray-100 font-mono bg-fixed bg-cover bg-center bg-no-repeat min-h-screen overflow-x-hidden", style="background-image: url(./background.jpg);">
+  <!-- Navigation Bar -->
+  <div class="bg-black bg-opacity-80 text-gray-100 shadow-md fixed top-0 w-full z-50">
+    <div class="mx-auto flex justify-between items-center">
+      <!-- Hamburger Button (Visible on Small Screens) -->
+      <button class="block md:hidden text-gray-100 hover:text-green-400 focus:outline-none" onclick="toggleMenu()">
+      <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path>
+      </svg>
+      </button>
+
+      <!-- Left Section: Name -->
+      <div class="px-4 pr-8 text-green-400 font-mono text-lg ml-0">
+        Dan Blackwell
+      </div>
+
+      <!-- Tab Menu (Hidden on Small Screens) -->
+      <div class="hidden md:flex">
+        <a href="index.html" class="px-6 py-1 bg-black text-white border-b border-x border-gray-700">1: Home</a>
+        <a href="blog.html" class="px-6 py-1 bg-gray-800 text-white border-b border-x border-gray-700">2: Blog</a>
+      </div>
+  
+      <!-- Filler Space to Extend Black Background -->
+      <div class="flex-grow bg-black h-full"></div>
+
+      <!-- Stats Section -->
+      <div class="flex items-center space-x-4 px-4 bg-black">
+        <div id="date" class="text-gray-400"></div>
+        <div id="time" class="text-gray-400"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mobile Menu (Initially Hidden) -->
+  <div id="mobile-menu" class="hidden md:hidden bg-black fixed top-8 w-full z-20">
+    <a href="index.html" class="block px-4 py-2 text-gray-400 hover:text-white">1: Home</a>
+    <a href="blog.html" class="block px-4 py-2 text-gray-100 hover:text-white">2: Blog</a>
+  </div>
+
+  <!-- Main Content -->
+  <div class="max-w-4xl min-h-screen mx-auto pt-24 pb-16">
+    <div class="px-8 py-8 bg-gray-900 bg-opacity-95 rounded-lg shadow-lg">
+      <h1 class="text-4xl font-bold mb-4">Detecting Which Bytes from an Input Affect each Branch Condition with DFSan (DataFlowSanitizer)</h1>
+      <p class="text-gray-300 text-sm mb-4 text-gray-400">
+        NOTE: This explains explains one of the concepts used in DGFuzz (<a href="https://github.com/DanBlackwell/DGFuzz" class="text-blue-400 hover:underline">[source here]</a>)
+      </p>
+
+      <p class="text-gray-300 mb-4">
+        This post explains the approach I used in DGFuzz to detect which bytes from an input affect each branch condition.
+        This is used to target the input mutations applied by the fuzzer to increase the likelihood of breaking through a particular branch condition.
+      </p>
+
+      <h2 class="text-2xl font-bold mb-4">Motivating Example</h2>
+      
+      <p class="text-gray-300 mb-4">
+        Let's say we are fuzzing the following (unrealistically trivial) functionality:
+      </p>
+
+      <div class="px-12 pb-4">
+        <pre><code class="language-c">int LLVMFuzzerTestOneInput(const uint8_t *Data, size_t Size) {
+  if (Size < 1000) return 0;
+  uint8_t a = Data[0], b = Data[1], c = Data[2], d = Data[3];
+  if (a + b + c + d == 100) {
+    abort(); // uh oh, crash!
+  }
+  return 0;
+}</code></pre>
+      </div>
+
+      <p class="text-gray-300 mb-4">
+        Firstly, for those unfamiliar, the function signature `int LLVMFuzzerTestOneInput(const uint8_t *Data, size_t Size)` is the standard 'libFuzzer' harness, as is accepted by most fuzzers.
+        The fuzzer itself generates an array of bytes to act as 'input' to the program, and calls this function with `Data` pointing to this array, and `Size` indicating its length.
+      </p>
+      <p class="text-gray-300 mb-4">
+        Now that's out of the way, let's look at the actual functionality.
+        Firstly, we have the `if (Size < 1000) return 0;` check - any input that makes it past this point must be at least 1,000 bytes long.
+        We then read the first 4 bytes of the input into variables `a`, `b`, `c` and `d`.
+        Finally, we check if the sum of these 4 bytes is equal to 100; if they do sum to 100, the `abort()` will cause the program to crash - this represents a vulnerability.
+      </p>
+      <p class="text-gray-300 mb-4">
+        Let's assume that we only ever generate inputs that are 1,000 bytes long, and thus pass the first check.
+        What are the odds that we generate an input that breaks through to the `abort()`?
+        Well, given that `a`, `b`, `c` and `d` are all 8-bit unsigned integers, the result will also be an 8-bit unsigned integer - meaning a possible range of 0-255.
+        The odds are therefore pretty good (1 in 256).
+        But what if `a`, `b`, `c` and `d` were all 32-bit unsigned integers? 
+        The range of possible values would then be 0-4,294,967,295, making it much more unlikely.
+      </p>
+      <p class="text-gray-300 mb-4">
+        Add to this the fact that a grey-box fuzzer is <em>mutating</em> an input - thus only changing a few bytes at a time - and you find that the odds of mutating even a single one of the bytes that affects this conditional check are very low.
+        As a result, most of the inputs generated by mutation have no effect at all on the conditional check.
+      </p>
+      <p class="text-gray-300 mb-4">
+        The technique discussed in this post, as used in DGFuzz, allows us to detect which bytes from the input affect the branch condition; allowing us to focus our mutations on only the bytes that make a difference, and improve the efficiency of the fuzzer (with respect to exploration).
+      </p>
+
+      <h2 class="text-xl font-bold mb-4">RedQueen and trace-cmp</h2>
+
+      <p class="text-gray-300 mb-4">
+        <a href="https://www.ndss-symposium.org/ndss-paper/redqueen-fuzzing-with-input-to-state-correspondence/" class="text-blue-400 hover:underline">RedQueen</a> was a revolutionary idea for fuzzing; though the idea itself is relatively simple.
+        In short, the idea is to store both sides of every conditional check ('x' and 'y' in 'x == y' for example), and make this information available to the fuzzer.
+        Then, the fuzzer can try replacing each occurence of 'x' in our input with 'y' (and then replacing every 'y' in the input with 'x').
+        This proved to be a silver bullet for breaking through checksums, hashing-based checks and magic numbers (things like the "%PDF" at the start of each valid PDF file).
+      </p>
+      <p class="text-gray-300 mb-4">
+        <a href="https://clang.llvm.org/docs/SanitizerCoverage.html#tracing-data-flow" class="text-blue-400 hover:underline">trace-cmp</a> offers similar functionality, and is built into SanitizerCoverage in LLVM.
+        As a result of LLVM making it so easy to implement, any modern state-of-the-art grey-box fuzzer will have RedQueen-like functionality built into it.
+      </p>
+      <p class="text-gray-300 mb-4">
+        Whilst RedQueen allows us to break through checks where subsections of the input are used directly in comparisons, it is not equipped to deal with instances where the input is processed in some way before being used in a comparison.
+        This includes the example above, where the input is read into variables and then the sum of the variables is used in the comparison.
+      </p>
+
+      <h2 class="text-xl font-bold mb-4">DataFlowSanitizer (Dynamic Taint-Analysis)</h2>
+
+      <p class="text-gray-300 mb-4">
+        <a href="https://clang.llvm.org/docs/DataFlowSanitizer.html" class="text-blue-400 hover:underline">DataFlowSanitizer (DFSan)</a> is a dynamic taint-analysis tool that is - like the other sanitizers - built into LLVM.
+        For those of you who are unfamiliar with taint-analysis, it is a technique used to track the flow of data through a program.
+        DFSan allows you to assign upto 8 labels to different areas of memory, and allows you to observe, at any later point in the program, whether a region of memory is dependent on any of the labelled data.
+        This example shows the interface:
+      </p>
+
+      <div class="px-12 pb-4">
+        <pre><code class="language-c">#include &lt;sanitizer/dfsan_interface.h&gt;
+#include &lt;assert.h&gt;
+
+int main(void) {
+  int i = 100;
+  int j = 200;
+  dfsan_label i_label = 1; // Create a new label
+  dfsan_label j_label = 2; // Create another new label
+  /* Bind each label to the memory area containing the
+     corresponding variable */
+  dfsan_set_label(i_label, &i, sizeof(i));
+  dfsan_set_label(j_label, &j, sizeof(j)); 
+
+  int k = i + j; // k is now dependent on i and j
+  // Fetch the labels affecting k
+  dfsan_label k_label = dfsan_read_label(&k, sizeof(k));
+  assert(k_label == i_label + j_label);
+
+  int l = 15; // l is not dependent on anything
+  dfsan_label l_label = dfsan_read_label(&l, sizeof(l));
+  assert(l_label == 0); // No labels are affecting l
+}</code></pre>
+      </div>
+
+      <p class="text-gray-300 mb-4">
+        You can play around with it here using <a href="https://godbolt.org/z/z7P5Y5P78" class="text-blue-400 hover:underline">Godbolt</a>.
+        Above, there is a data flow from `i` to `k` in `k = i + j`, and from `j` to `k` in the same line.
+        We can see, from the assertion passing, that DFSan is able to correctly track this data flow.
+      </p>
+      <p class="text-gray-300 mb-4">
+        From the documentation, I discovered that DFSan provides the option to get a callback at each conditional check (using the `-dfsan-conditional-callbacks` flag), which lets you know which label(s) are affecting all data used in the check.
+        Hopefully, you can see how this could be used to figure out which parts of the input are used in a conditional check.
+        The issue we have is that DFSan only allows us to track 8 labels; and for our original example, an input that reaches the stubborn conditional must be at least 1,000 bytes.
+      </p>
+
+      <h2 class="text-xl font-bold mb-4">'The Algorithm'</h2>
+
+      <p class="text-gray-300 mb-4">
+        A naive approach to this problem would be to run the program repeatedly with our original input, and assign a new label to each byte of the input.
+        The first execution would allow us to check the conditionals affected by the first 8-bytes, the second execution would allow us to check the conditionals affected by the next 8-bytes, and so on.
+        'Just' 125 executions would allow us to track the effect of all 1,000 bytes.
+        If the input were 10,000 bytes, we'd need 1,250 executions.
+        This is always an O(n) algorithm - where `n` is the length of the input.
+        Below is a pseudocode (Python) implementation: 
+      </p>
+
+      <div class="px-12 pb-4">
+        <pre><code class="language-python">def find_dependencies(input, program):
+    input_index = 0
+    all_bytes_depended_on = []
+    while input_index < len(input):
+        for label_num in range(8):
+            dfsan_set_label(label_num, &input[input_index], 1)
+            input_index += 1
+            # We shouldn't label memory past the end of our input
+            if input_index >= len(input):
+                break
+        # We run the program with the input, and see which labels 
+        # affect the conditional check (details of how that is done
+        # are omitted)
+        affected_labels = program(input)
+        all_bytes_depended_on += affected_labels
+
+    return all_bytes_depended_on</code></pre>
+      </div>
+
+      <p class="text-gray-300 mb-4">
+        We can, of course, do better than that.
+        My idea was to use a top-down approach: start by splitting the 8 labels across the entire length of the input.
+        So, for our 1,000 byte input, the labels would be assigned to the ranges: [0...124, 125...249, 250...374, ..., 875...999].
+      </p>
+      <p class="text-gray-300 mb-4">
+        For the original example check, only the first 4 bytes are used in the conditional check; so only the label for first range (0...124) would be indicated.
+      </p>
+      <p class="text-gray-300 mb-4">
+        We would then rerun the program with the 8 labels distributed across the range 0...124, for example: [0...15, 16...31, 32...47, ..., 112...124].
+        Again, we would find that only the first label is indicated; so we could rerurn with labels distributed across the range 0...15, for example: [0...1, 2...3, 4...5, ..., 14...15].
+        This time, we would find that the first 2 labels are indicated; now we rerun with just 4 labels, assigned to bytes [0, 1, 2, 3].
+      </p>
+      <p class="text-gray-300 mb-4">
+        In just 4 executions, we have shown that only the first 4 bytes are used in the conditional check.
+        For short contiguous ranges like the example, this is an O(log(n)) algorithm - where `n` is the length of the input, and our log is base 8.
+      </p>
+      <p class="text-gray-300 mb-4">
+        It is a little more complex when the bytes affecting the conditional check are not contiguous, so here is a pseudocode (Python) implementation showing that:
+      </p>
+
+      <div class="px-12 pb-4">
+        <pre><code class="language-python">def find_dependencies(input, program):
+    all_bytes_depended_on = []
+    # We store a tuple (start_of_range, end_of_range) for each range we
+    # need to check
+    queue = [(0, len(input) - 1)]
+    
+    while len(queue) > 0:
+        start, end = queue.pop(0)
+        range_for_label = {}
+        sub_range_len = (end - start) / 8
+        start_offset = start
+        for label_num in range(8):
+            # The final argument is the length of memory region to label
+            dfsan_set_label(label_num, &input[start_offset], sub_range_len)
+            range_for_label[label_num] = (start_offset, start_offset + sub_range_len)
+            start_offset += sub_range_len
+            # Maybe there's less than 8 bytes in our range, so we stop
+            if start_offset > end:
+                break
+        
+        affected_labels = program(input)
+        for label_num in affected_labels:
+            start, end = range_for_label[label_num]
+            if start == end:
+                all_bytes_depended_on.append(start)
+            else:
+                queue.append((start, end))
+
+    return all_bytes_depended_on</code></pre>
+      </div>
+
+      <p class="text-gray-300 mb-4">
+        A (somewhat ugly) implementation of this in Rust can be found <a href="https://github.com/DanBlackwell/DGFuzz/blob/135c90588715b84c4a62a25f1889ba4d3ac69825/libafl_targets/src/dfsan.rs#L267" class="text-blue-400 hover:underline">here</a>.
+        Note that if every single byte of the input is used in the conditional check, this algorithm will still require O(n) executions. 
+        If that is too painful (for example, if the input is 100,000 bytes long), then the option to bail out early before reaching single byte level precision is an option. 
+        Knowing that some subset of 1,000 bytes affect some conditional check is still much better than 100,000.
+      </p>
+
+      <h2 class="text-2xl font-bold mb-4">Dealing with Multiple Conditionals</h2>
+
+      <p class="text-gray-300 mb-4">
+        One of the key tricks of DGFuzz is to use information from the control flow graph (CFG), combined with coverage feedback from the fuzzing campaign so far, to determine which conditionals have not yet been broken through.
+        I then use the above algorithm to determine which bytes are used in these unbeaten conditional checks, and focus mutations on these bytes.
+        Note that each dependency trace is only valid for the specific input that gets tested; I run this tracing procedure for each input in the fuzzing corpus - and cache the results (a mapping from conditional to a list of bytes that it depends on).
+      </p>
+
+      <h2 class="text-2xl font-bold mb-4">Implicit Flows - a Limitation</h2>
+
+      <p class="text-gray-300 mb-4">
+        As of the time of writing, (Clang 19 release), DFSan does not track implicit flows properly.
+        An implicit flow is when information flows from one variable to another, but not directly.
+        For example:
+      </p>
+
+      <div class="px-12 pb-4">
+        <pre><code class="language-c">int is_num_large(int val) {
+  if (val > 1000)
+    return 1;
+  else
+    return 0;
+}
+
+int main(void) {
+  int i = 100;
+  dfsan_label i_label = 1; // Create a new label
+  dfsan_set_label(i_label, &i, sizeof(i));
+
+  int is_large = is_num_large(i);
+  dfsan_label is_large_label = dfsan_read_label(&is_large, sizeof(is_large));
+  assert(is_large == i_label);
+
+  return 0;
+}</code></pre>
+      </div>
+
+      <p class="text-gray-300 mb-4">
+        Here, the value of `is_large` is dependent on the value of `i` - due to the if-statement in the is_num_large function (if i > 1000, then `is_large` will be 1, otherwise it will be 0).
+        However, the <a href="https://godbolt.org/z/hj9hfo54W" class="text-blue-400 hover:underline">assertion will fail</a> if the `else` branch is taken.
+        This does mean that sometimes this approach can underestimate the number of bytes that affect a conditional check.
+      </p>
+
+      <h2 class="text-2xl font-bold mb-4">Conclusion</h2>
+
+      <p class="text-gray-300 mb-4">
+        DataFlowSanitizer (DFSan) is a very powerful tool, but it seems constrained by only having 8 labels available to track data flow.
+        This can be worked around using the algorithm described above, and DGFuzz proves that this approach can scale to doing byte-level dependency tracing for huge inputs, without slowing the fuzzer down significantly.
+        This allows for targeted mutations that can help break through stubborn conditional checks that rely on manipulated data from the input.
+      </p>
+    </div>
+  </div>
+
+  <!-- Credit for Background Image -->
+  <div class="bottom-0 left-0 bg-gray-800 bg-opacity-75 text-gray-300 text-sm p-2 rounded-tl-lg">
+    Background Photo of the City of London at night by <a href="https://unsplash.com/@christopher__burns?utm_content=creditCopyText&utm_medium=referral&utm_source=unsplash" class="underline">Christopher Burns</a> on <a href="https://unsplash.com/photos/aerial-photography-of-city-scapes-at-nighttime-4NIpiAP3-2Q?utm_content=creditCopyText&utm_medium=referral&utm_source=unsplash" class="underline">Unsplash</a>
+  </div>
+
+  <script>
+    // JavaScript to toggle the mobile menu and stats visibility
+    function toggleMenu() {
+      const menu = document.getElementById('mobile-menu');
+      menu.classList.toggle('hidden');
+    }
+  </script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+  <script>hljs.highlightAll();</script>
+</body>
+</html>
